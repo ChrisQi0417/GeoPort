@@ -775,13 +775,9 @@ async function initializeMap(userLocale) {
         maxZoom: 20
     });
 
-    // Use searchLocation to get coordinates based on userLocale
-    await searchLocation(userLocale);
+    setDefaultLocation();
 
     map.on('dblclick', handleMapDoubleClick);
-
-    // Set the zoom level to 4
-    map.setZoom(4);
 
     // // Use Stadia Maps as the tile layer
     // L.tileLayer('https://tiles.stadiamaps.com/tiles/osm_bright/{z}/{x}/{y}{r}.png', {
@@ -2593,7 +2589,6 @@ function continueAfterDeveloperModeRequired() {
     document.addEventListener('DOMContentLoaded', function () {
     console.log("test");
     initializeMap();
-    searchLocation();
     handleFuelTypeChange();
     document.getElementById('rsdData').addEventListener('change', updateSetLocationButtonStatus);
     document.getElementById('coordinates').addEventListener('input', updateSetLocationButtonStatus);
@@ -2749,7 +2744,7 @@ function continueAfterDeveloperModeRequired() {
             <label class="mb-0" for="coordinates">Location:</label>
         </div>
         <div class="col d-flex align-items-start"> <!-- Align input to the start -->
-            <input type="text" class="form-control glassmorphic-card" id="coordinates">
+            <input type="text" class="form-control glassmorphic-card" id="coordinates" value="40.5129, -111.8396">
         </div>
         <div class="col-md-auto d-flex align-items-center justify-content-center">
             <button type="button" class="btn" id="search" onclick="handleSearch()">Search</button>
