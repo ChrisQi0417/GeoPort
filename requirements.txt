@@ -3,4 +3,5 @@ psutil
 pycountry
 pymobiledevice3==8.2.4
 pyuac
+pywin32
 requests
