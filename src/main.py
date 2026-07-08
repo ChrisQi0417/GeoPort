@@ -57,6 +57,7 @@ parser.add_argument('--no-browser', action='store_true', help='Skip auto opening
 parser.add_argument('--port', type=int, help='Specify port number to listen on for web browser requests')
 parser.add_argument('--wifihost', type=str, help='Specify the wifi IP address to connect to')
 parser.add_argument('--udid', type=str, help='Specify the device udid to target')
+parser.add_argument('--no-elevate', action='store_true', help=argparse.SUPPRESS)
 args = parser.parse_args()
 #========= Arg Parser ========
 
@@ -93,7 +94,9 @@ flask_port = 54321
 api_url = "https://projectzerothree.info/api.php?format=json"
 api_data = None
 user_locale = None
-location = None
+DEFAULT_LATITUDE = 40.5129
+DEFAULT_LONGITUDE = -111.8396
+location = f"{DEFAULT_LATITUDE} {DEFAULT_LONGITUDE}"
 rsd_data = None
 rsd_host = None
 rsd_port = None
@@ -109,7 +112,7 @@ pair_record = None
 error_message = None
 sudo_message = ""
 captured_output = None
-GITHUB_REPO = 'davesc63/GeoPort'
+GITHUB_REPO = 'ChrisQi0417/GeoPort'
 CURRENT_VERSION_FILE = 'CURRENT_VERSION'
 BROADCAST_FILE = 'BROADCAST'
 APP_VERSION_NUMBER = "2.3.3"
@@ -118,6 +121,27 @@ terminate_tunnel_thread = False
 terminate_location_thread = False
 location_threads = []
 timeout = DEFAULT_BONJOUR_TIMEOUT
+
+def resolve_maybe_awaitable(value):
+    if asyncio.iscoroutine(value):
+        return asyncio.run(value)
+    return value
+
+def get_wifi_connection_state(lockdown):
+    if not hasattr(lockdown, 'enable_wifi_connections'):
+        return False
+
+    try:
+        wifi_connection_state = lockdown.enable_wifi_connections
+        if wifi_connection_state is False:
+            logger.info("Enabling Wifi Connections")
+            lockdown.enable_wifi_connections = True
+            logger.info("Wifi Connection State: True")
+            return True
+        return wifi_connection_state
+    except Exception as e:
+        logger.warning(f"Unable to read or enable WiFi connections: {e}")
+        return False
 
 # Get the current platform using sys.platform
 current_platform = sys.platform
@@ -192,6 +216,7 @@ def run_tunnel(service_provider):
 
     except Exception as e:
         error_message = str(e)
+        logger.exception(f"Error in run_tunnel: {error_message}")
 
         # Handle the exception, such as logging it or returning an error response
         with app.app_context():
@@ -253,6 +278,7 @@ def run_tcp_tunnel(service_provider):
 
     except Exception as e:
         error_message = str(e)
+        logger.exception(f"Error in run_tcp_tunnel: {error_message}")
 
         # Handle the exception, such as logging it or returning an error response
         with app.app_context():
@@ -278,9 +304,9 @@ async def start_tcp_tunnel(service_provider: CoreDeviceTunnelProxy) -> None:
 
     #service = await create_core_device_tunnel_service_using_rsd(service_provider, autopair=True)
 
-    lockdown = create_using_usbmux(udid, autopair=True)
+    lockdown = resolve_maybe_awaitable(create_using_usbmux(udid, autopair=True))
     #print("Lockdown for Windows: ", lockdown)
-    service = CoreDeviceTunnelProxy(lockdown)
+    service = await CoreDeviceTunnelProxy.create(lockdown)
     #asyncio.run(tunnel_task(service, secrets=None, protocol=TunnelProtocol.TCP), debug=True)
     async with service.start_tcp_tunnel() as tunnel_result:
         logger.info(f"TCP Address: {tunnel_result.address}")
@@ -522,9 +548,12 @@ def check_developer_mode(udid, connection_type):
 
         logger.warning(f"Check Developer Mode")
 
-        lockdown = create_using_usbmux(udid, connection_type=connection_type, autopair=True)
+        lockdown = resolve_maybe_awaitable(create_using_usbmux(udid, connection_type=connection_type, autopair=True))
 
-        result = lockdown.developer_mode_status
+        if hasattr(lockdown, 'get_developer_mode_status'):
+            result = resolve_maybe_awaitable(lockdown.get_developer_mode_status())
+        else:
+            result = lockdown.developer_mode_status
         logger.info(f"Developer Mode Check result:  {result}")
 
         # Check if developer mode is enabled
@@ -563,16 +592,16 @@ def enable_developer_mode(udid, connection_type):
         pass
         #return False, "No Pair Record Found. Please use a USB cable first to create a pair record"
 
-    lockdown = create_using_usbmux(
+    lockdown = resolve_maybe_awaitable(create_using_usbmux(
         udid,
         connection_type=connection_type,
         autopair=True,
-        pairing_records_cache_folder=home)
+        pairing_records_cache_folder=home))
 
 
     try:
 
-        AmfiService(lockdown).enable_developer_mode()
+        resolve_maybe_awaitable(AmfiService(lockdown).enable_developer_mode())
         logger.info("Enable complete, mount developer image...")
         mount_developer_image()
 
@@ -636,13 +665,20 @@ def connect_device():
             rsd_host = rsd_data['host']
             rsd_port = rsd_data['port']
 
-            logger.info(f"RSD in udid mapping is: {rsd_data}")
-            logger.info("RSD already created. Reusing connection")
-            logger.info(f"RSD Data: {rsd_data}")
-            return jsonify({'rsd_data': rsd_data})
+            if rsd_host is None or rsd_port is None:
+                logger.info("Ignoring cached empty RSD data")
+                del rsd_data_map[udid][connection_type]
+                if not rsd_data_map[udid]:
+                    del rsd_data_map[udid]
+            else:
+                logger.info(f"RSD in udid mapping is: {rsd_data}")
+                logger.info("RSD already created. Reusing connection")
+                logger.info(f"RSD Data: {rsd_data}")
+                return jsonify({'rsd_data': rsd_data})
 
-        # If no matching entry found for the udid and desired connection type
-        logger.info(f"No matching RSD entry found for udid: {udid} and connection type: {connection_type}")
+        if udid in rsd_data_map and connection_type not in rsd_data_map[udid]:
+            # If no matching entry found for the udid and desired connection type
+            logger.info(f"No matching RSD entry found for udid: {udid} and connection type: {connection_type}")
 
 
     # Check if developer mode is enabled, and enable it if not
@@ -745,7 +781,7 @@ def connect_usb(data):
 
             else:
                 global lockdown
-                lockdown = create_using_usbmux(udid, autopair=True)
+                lockdown = resolve_maybe_awaitable(create_using_usbmux(udid, autopair=True))
                 logger.info(f"Create Lockdown {lockdown}")
                 start_tcp_tunnel_thread(lockdown)
 
@@ -753,6 +789,7 @@ def connect_usb(data):
             #time.sleep(3)
             if not check_rsd_data():
                 logger.error("RSD Data is None, Perhaps the tunnel isn't established")
+                return jsonify({'error': 'RSD tunnel did not start. Run GeoPort as Administrator and reconnect.', 'rsd_data': None})
             else:
                 rsd_data = rsd_host, rsd_port
                 logger.info(f"RSD Data: {rsd_data}")
@@ -772,7 +809,7 @@ def connect_usb(data):
 
             # create LockdownServiceProvider
             #global lockdown
-            lockdown = create_using_usbmux(udid, autopair=True)
+            lockdown = resolve_maybe_awaitable(create_using_usbmux(udid, autopair=True))
             logger.info(f"Lockdown client = {lockdown}")
             #rsd_data = rsd_host, rsd_port
             rsd_host, rsd_port = rsd_data
@@ -830,6 +867,7 @@ def connect_wifi(data):
 
             if not check_rsd_data():
                 logger.error("RSD Data is None, Perhaps the tunnel isn't established")
+                return jsonify({'error': 'RSD tunnel did not start. Run GeoPort as Administrator and reconnect.', 'rsd_data': None})
             else:
                 rsd_data = rsd_host, rsd_port
                 logger.info(f"RSD Data: {rsd_data}")
@@ -844,7 +882,7 @@ def connect_wifi(data):
 
             # create LockdownServiceProvider
             global lockdown
-            lockdown = create_using_usbmux(udid, connection_type=connection_type, autopair=True)
+            lockdown = resolve_maybe_awaitable(create_using_usbmux(udid, connection_type=connection_type, autopair=True))
             #lockdown = create_using_tcp(wifi_address, udid)
             logger.info(f"Lockdown client = {lockdown}")
 
@@ -875,8 +913,8 @@ async def start_wifi_tcp_tunnel() -> None:
     #         cli_install_wetest_drivers()
 
     #service = await create_core_device_tunnel_service_using_remotepairing(udid, wifi_address, wifi_port)
-    lockdown = create_using_usbmux(udid)
-    service = CoreDeviceTunnelProxy(lockdown)
+    lockdown = resolve_maybe_awaitable(create_using_usbmux(udid))
+    service = await CoreDeviceTunnelProxy.create(lockdown)
 
     async with service.start_tcp_tunnel() as tunnel_result:
         resume_remoted_if_required()
@@ -962,10 +1000,10 @@ def mount_developer_image():
     try:
 
         global lockdown
-        lockdown = create_using_usbmux(udid, autopair=True)
+        lockdown = resolve_maybe_awaitable(create_using_usbmux(udid, autopair=True))
         logger.info(f"mount lockdown: {lockdown}")
 
-        auto_mount(lockdown)
+        resolve_maybe_awaitable(auto_mount(lockdown))
 
         return 'Developer image mounted successfully'
     except Exception as e:
@@ -1188,7 +1226,7 @@ def py_list_devices():
         connected_devices = {}
 
         # Retrieve all devices
-        all_devices = list_devices()
+        all_devices = resolve_maybe_awaitable(list_devices())
         #wifi_devices = None
         #wifi_devices = asyncio.run(get_network_devices())
         logger.info(f"\n\nRaw Devices:  {all_devices}\n")
@@ -1199,14 +1237,14 @@ def py_list_devices():
             udid = args.udid
             logger.warning(f"Wifi requested to {wifihost}")
             logger.warning(f"udid: {udid}")
-            lockdown = create_using_tcp(hostname=wifihost, identifier=udid)
+            lockdown = resolve_maybe_awaitable(create_using_tcp(hostname=wifihost, identifier=udid))
 
             # udid = lockdown.udid
             # print("wifi udid", udid)
             info = lockdown.short_info
             logger.warning(f"Wifi Short Info: {info}")
             # Modify the info dictionary to include wifiConState
-            wifi_connection_state = lockdown.enable_wifi_connections = True
+            wifi_connection_state = get_wifi_connection_state(lockdown)
             info['wifiState'] = wifi_connection_state
 
             # Modify the info dictionary to include user locale
@@ -1244,16 +1282,11 @@ def py_list_devices():
 
             # Create lockdown and info variables
             #global lockdown
-            lockdown = create_using_usbmux(udid, connection_type=connection_type, autopair=True)
+            lockdown = resolve_maybe_awaitable(create_using_usbmux(udid, connection_type=connection_type, autopair=True))
             info = lockdown.short_info
 
 
-            wifi_connection_state = lockdown.enable_wifi_connections
-
-            if wifi_connection_state == False:
-                logger.info("Enabling Wifi Connections")
-                wifi_connection_state = lockdown.enable_wifi_connections = True
-                logger.info(f"Wifi Connection State: True")
+            wifi_connection_state = get_wifi_connection_state(lockdown)
 
             # Modify the info dictionary to include wifiConState
             info['wifiState'] = wifi_connection_state
@@ -1463,7 +1496,7 @@ if __name__ == '__main__':
             pyi_splash.close()
         except:
             pass
-        if not pyuac.isUserAdmin():
+        if not args.no_elevate and not pyuac.isUserAdmin():
             print("Relaunching as Admin")
             pyuac.runAsAdmin()
     #else:

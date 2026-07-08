@@ -658,6 +658,8 @@ if (appVersionType === "standard") {
 
 
 // Global variables
+const DEFAULT_LATITUDE = 40.5129;
+const DEFAULT_LONGITUDE = -111.8396;
 var marker; // Variable to store the marker
 var drawnItems = new L.FeatureGroup(); // Define the layer to add loaded files
 var gpxArray = []; // Array to store feature data
@@ -1526,8 +1528,24 @@ function handleSearch() {
     searchLocation(input);
 }
 
+function setDefaultLocation() {
+    const latLng = [DEFAULT_LATITUDE, DEFAULT_LONGITUDE];
+    if (!marker) {
+        marker = createMarker(latLng);
+    } else {
+        marker.setLatLng(latLng);
+    }
+    map.setView(latLng, 13);
+    setCoordinates(DEFAULT_LATITUDE, DEFAULT_LONGITUDE);
+}
+
 // Function to search location
 async function searchLocation(input, userLocale) {
+    if (!input || String(input).trim() === '') {
+        setDefaultLocation();
+        return;
+    }
+
     // Initialize the OSM provider for searching
     var provider = new GeoSearch.OpenStreetMapProvider();
     try {
