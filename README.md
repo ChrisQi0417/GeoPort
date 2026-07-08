@@ -86,6 +86,16 @@ You will need to install iTunes (we need their USB service so we can discover th
 - Run the application
 - Explore the world and **Simulate Location**
 
+## Run from source
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe src\main.py --no-browser --port 54321
+```
+
+Then open `http://localhost:54321` in a browser. On Windows, GeoPort may request administrator permissions when run normally because iOS device tunneling requires elevated access.
+
 ## App Notes
 - iOS 17 & iOS 18 are supported on both Windows and Mac
 - Administrator / Sudo permissions are required for iOS17

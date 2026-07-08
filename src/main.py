@@ -36,7 +36,14 @@ from pymobiledevice3.osu.os_utils import get_os_utils
 from pymobiledevice3.bonjour import DEFAULT_BONJOUR_TIMEOUT, browse_mobdev2
 from pymobiledevice3.pair_records import get_local_pairing_record, get_remote_pairing_record_filename, get_preferred_pair_record
 from pymobiledevice3.common import get_home_folder
-from pymobiledevice3.cli.remote import cli_install_wetest_drivers
+try:
+    from pymobiledevice3.cli.remote import cli_install_wetest_drivers
+except ImportError:
+    def cli_install_wetest_drivers():
+        raise RuntimeError(
+            "pymobiledevice3 does not expose cli_install_wetest_drivers; "
+            "install the WeTest driver manually before using iOS 17.0-17.3 on Windows"
+        )
 
 from pymobiledevice3.cli.remote import tunnel_task
 from pymobiledevice3.lockdown import LockdownClient
